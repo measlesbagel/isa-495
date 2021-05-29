@@ -1,0 +1,67 @@
+---
+title: 'Lab 3: Credit Card Fraud Modeling'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+##Read data in
+```{r}
+pacman::p_load(tidyverse, magrittr, caret, caretEnsemble, pROC, glmnet, rpart, e1071, DMwR)
+
+df = read.csv("creditcard.csv")
+df$Class = as.factor(df$Class)
+df$Class = recode_factor(df$Class, "1"="Fraudulent", "0"="Normal")
+summary(df)
+```
+
+
+##Create training and testing sets from data
+```{r}
+trainRowNums = createDataPartition(df$Class, p=0.8, list = F) %>% as.vector()
+trainData = df[trainRowNums,]
+testData = df[-trainRowNums,]
+```
+
+
+##Building and training models for prediction
+```{r}
+fitControl = trainControl(method = "cv",
+                          number = 10,
+                          sampling = "down",
+                          summaryFunction = twoClassSummary,
+                          classProbs = T,
+                          selectionFunction = "best",
+                          savePredictions = T,
+                          index = createResample(trainData$Class, times = 10))
+
+models = caretList(Class ~ ., data = trainData, metric = "ROC",
+                   tuneList = list(
+                     cart = caretModelSpec(method = "rpart", tuneLength=10),
+                     glm = caretModelSpec(method = "glm", family = "binomial"),
+                     lasso = caretModelSpec(method = "glmnet", family="binomial",
+                                            tuneGrid = expand.grid(.alpha=1,
+                                                                  .lambda=seq(0.0001, 2, length=10)) )
+                   ),
+                   trControl = fitControl, 
+                   preProcess = c("nzv", "center", "scale", "corr")
+)
+```
+
+
+##Looking at results of training and prediction
+```{r}
+cvResults = resamples(models)
+scales = list(x=list(relation="free"), y=list(relation="free"))
+
+bwplot(cvResults, scales = scales)
+
+confMatrix = lapply(models, predict, newdata = testData, type="raw") %>% 
+  lapply(confusionMatrix, testData$Class) %>% 
+  lapply("[[", "table")
+
+confMatrix
+```

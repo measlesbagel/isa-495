@@ -1,0 +1,187 @@
+---
+title: "Lab 2 - Distributed Denial of Service Attacks"
+author: "Hailey Werth and Myles Cagle"
+date: "2/27/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Question B
+
+## Reading in the data and selecting variables that we believed would have explanatory power
+```{r}
+pacman::p_load(tidyverse, magrittr, jsonlite, igraph, robustHD, caret, pROC)
+
+df = read.csv("Portmap.csv", stringsAsFactors = F)
+
+df %<>% select(c(Source.IP, Destination.IP, Total.Fwd.Packets, Total.Backward.Packets, 
+                Fwd.IAT.Total, Bwd.IAT.Total, Fwd.PSH.Flags,
+                 Bwd.Header.Length, Fwd.Packets.s, 
+                 Bwd.Packets.s, Min.Packet.Length, Max.Packet.Length, Average.Packet.Size, Active.Mean, Idle.Mean, SimillarHTTP,
+                 Inbound, Label))
+
+str(df)
+summary(df)
+
+
+df = select(df,-SimillarHTTP)
+df = select(df,-Source.IP)
+df = select(df,-Destination.IP)
+
+```
+
+
+Started with 24 variables, ended with 15 for analysis. Dropped based on near-zero variance, low predictive power and negative values.Decided to drop IP variables rather than group them into a factor because there are a number of points in the data where the IP addresses do not match up to a location. Most likely because they are private. Also, converting them to numeric did not make much sense to us in regard to our own model.
+
+
+## Changing Variables to Factors
+```{r}
+df$Inbound = as.factor(df$Inbound)
+df$Fwd.PSH.Flags = as.factor(df$Fwd.PSH.Flags)
+df$Label = recode_factor(df$Label, "1"="Portmap", "0"="Benign")
+```
+
+
+## Visualizing the data to better understand our dataset
+```{r}
+ggplot(df,aes(x=Label, y=Active.Mean)) + geom_point()+ggtitle("Scatter Plot of Active Mean")
+ggplot(df,aes(x=Average.Packet.Size)) + geom_histogram(bins=20) + ggtitle("Histogram: Average.Packet.Size")
+
+
+df_grouped1 = df %>% group_by(Label) %>% select_if(is.numeric) %>% summarise_all(list(avg = mean, stdDev = sd)) %>% data.frame()
+
+df_grouped1
+```
+
+
+## Scaling the numeric variables
+```{r}
+df2 = df %>% select_if(is.numeric) %>% scale() %>% data.frame()
+```
+
+
+```{r}
+# Adding categorical variables back into the dataframe 
+
+df2['Inbound']= df['Inbound']
+df2['Fwd.PSH.Flags']= df['Fwd.PSH.Flags']
+df2['Label']= df['Label']
+
+```
+
+
+## Partitioning the Data
+```{r}
+trainRowNums = sample(1:nrow(df2), round(0.7*nrow(df2)))
+
+trainData = df[trainRowNums,]
+testData = df[-trainRowNums,]
+
+```
+
+
+## Model Building and Validation
+```{r}
+options(scipen = 999)
+MODEL1 <- glm(Label ~., data = trainData, family ='binomial')
+summary(MODEL1)
+
+
+#null <-glm(Label~1, data = trainData, family = "binomial")
+#full <-glm(Label~Total.Fwd.Packets + Fwd.PSH.Flags + Min.Packet.Length +
+#            Inbound + Active.Mean, data = trainData, family = "binomial")
+#MODEL2 <-step(null,list(lower =formula(null), upper =formula(full)),data = trainData, direction = "both", trace = 0)
+#summary(MODEL2)
+
+
+MODEL3 = glm(Label~Total.Fwd.Packets + Fwd.PSH.Flags + Active.Mean + Inbound, data = trainData, family = "binomial")
+summary(MODEL3)
+
+p3.train <-predict(MODEL3, data = trainData, type = "response")
+p3.valid <-predict(MODEL3, newdata = testData, type = "response")
+r3.train <-roc(trainData$Label, p3.train)
+
+r3.valid <-roc(testData$Label, p3.valid)
+m3.train.auc <- r3.train$auc
+m3.valid.auc <- r3.valid$auc
+m3.train.auc
+m3.valid.auc
+
+
+plot(r3.valid)
+
+```
+
+In the end we chose are third model. Our second model that used a stepwise variable selection method did give us a higher AUC value. However, it was so high it appeared the the model was overfitting the data. Therefore, we decided to go with the third model that gave us an AUC that was much more reasonable. We derived this model after tweaking it multuple times and playing around with the variables we had.
+
+#Question C
+##Reading in the data
+```{r}
+pacman::p_load(devtools)
+install_github("ltorgo/DMwR2",ref="master")
+
+#MSSQL Dataset
+MSSQLcolnames = read.csv("MSSQL.csv", nrows = 1, header = TRUE)
+dfMSSQL = DMwR2::sampleCSV("MSSQL.csv", percORn = 0.15, header = TRUE)
+colnames(dfMSSQL) <- colnames(MSSQLcolnames)
+
+dfMSSQL %<>% select(c(Total.Fwd.Packets, Total.Backward.Packets, 
+                 Fwd.IAT.Total, Bwd.IAT.Total, Fwd.PSH.Flags,
+                 Bwd.Header.Length, Fwd.Packets.s, 
+                 Bwd.Packets.s, Min.Packet.Length, Max.Packet.Length, Average.Packet.Size, Active.Mean, Idle.Mean,
+                 Inbound, Label))
+
+summary(dfMSSQL)
+
+#UDPLag Dataset
+UDPLagcolnames = read.csv("UDPLag.csv", nrows = 1, header = TRUE)
+dfUDPLag = DMwR2::sampleCSV("UDPLag.csv", percORn = 0.25, header = TRUE)
+colnames(dfUDPLag) <- colnames(UDPLagcolnames)
+
+dfUDPLag %<>% select(c(Total.Fwd.Packets, Total.Backward.Packets, 
+                 Fwd.IAT.Total, Bwd.IAT.Total, Fwd.PSH.Flags,
+                 Bwd.Header.Length, Fwd.Packets.s, 
+                 Bwd.Packets.s, Min.Packet.Length, Max.Packet.Length, Average.Packet.Size, Active.Mean, Idle.Mean,
+                 Inbound, Label))
+
+summary(dfUDPLag)
+
+```
+When sampling the data we wanted to make sure we got a solid representation of the entire dataset. 
+
+For the MSSQL dataset we decided that 15% of the data seemed like a well rounded choice of not getting too much data but also making sure we have an unbiased set of data given how large this dataset was at nearly 6 million observations.
+
+For the UDPLag dataset we went with a larger percent of 25% because this dataset was much smaller than MSSQL. The reason we went with 25% is because even though it was randomly selected we wanted to have around as much data as we had for the Portmap dataset so that it would be comparable.
+
+Overall, we came to these conclusions after doing research into how much data is generally needed when doing predictive analytics. We found that while obviously more data doesnt hurt, in larger datasets especially for more traditional predictive modeling there is a point of diminishing returns. That is how we came to the conclusion of what a reasonable amount of data would be for this project.
+
+## Visualizing the data for better comparison with Portmap
+```{r}
+#MSSQL Dataset Visuals
+ggplot(dfMSSQL,aes(x=Average.Packet.Size)) + geom_histogram(bins=20)+ggtitle("MSSQL: Histogram of Average Packet Size")
+ggplot(dfMSSQL,aes(x=Label, y=Active.Mean)) + geom_point()+ggtitle("MSSQL: Scatter Plot of Active Mean")
+
+MSSQL_grouped = dfMSSQL %>% group_by(Label) %>% select_if(is.numeric) %>% summarise_all(list(avg = mean, stdDev = sd)) %>% data.frame()
+
+MSSQL_grouped
+
+#UDPLag Dataset Visuals
+ggplot(dfUDPLag,aes(x=Average.Packet.Size)) + geom_histogram(bins=20)+ggtitle("UDPLag: Histogram of Average Packet Size")
+ggplot(dfUDPLag,aes(x=Label, y=Active.Mean)) + geom_point()+ggtitle("UDPLag: Scatter Plot of Active Mean")
+
+UDPLag_grouped = dfUDPLag %>% group_by(Label) %>% select_if(is.numeric) %>% summarise_all(list(avg = mean, stdDev = sd)) %>% data.frame()
+
+UDPLag_grouped
+
+```
+1. For the important features we have chosen from the Portmap dataset we found that in both the MSSQL dataset and the UDPLag dataset these features seemed fairly similar when looking at a basic summary of each dataset. Most of the features at this level only showed much difference in fields such as their maximum value. 
+
+   When we looked into it more it became more obvious that these datasets did differ. When looking at the histograms of Average Packet Size it can be seen that Portmap focused around one point, MSSQL had more of a normal distribution, and UDPLag had a noteworthy separation where most of the data was at 0 but a large chunk was completely outside of this by itself. When looking at the graph of Active Mean by Label the results are much less evenly distributed. For the MSSQL dataset there were large gaps in each label and for the UDPLag dataset each label was more tightly segmented.
+   
+   Finally, when looking at the grouped data means this visual is confirmed as they differ a noticable amount in features such as Average Packet Size and Active Mean.
+   
+2. When comparing the three models we felt that the features did seem stable as even though there was large difference in some of their values their standard deviation or variance remained very similar across all three datasets over most of their features.
+   
